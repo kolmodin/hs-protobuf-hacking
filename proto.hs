@@ -108,7 +108,7 @@ build (B.PS fp offset length) = B.inlinePerformIO $ withForeignPtr fp $ \fpPtr -
   let go ptr builder@(Builder bv v updateFn) = go' ptr bv v
         where
           go' ptr bv v
-            | ptr >= endPtr = return $! finalize builder
+            | ptr >= endPtr = return $! finalize (Builder bv v updateFn)
             | ptr < endPtr = do
                 varInt ptr endPtr $ \ptr key -> do
                 let !fieldNumber = mkFieldNumber key
