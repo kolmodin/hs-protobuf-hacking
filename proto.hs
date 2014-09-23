@@ -131,7 +131,7 @@ varInt :: Ptr Word8 -> Ptr Word8 -> (Ptr Word8 -> Int64 -> IO (Result b)) -> IO 
 varInt ptr0 endPtr0 k = go acc0 ptr0 0 
   where
         !acc0 = 0
-        !bytes = 10 -- ceiling (fromIntegral (bitSize acc0) / 7)
+        !bytes = ceiling (fromIntegral (bitSize acc0) / 7)
         !endPtr = min endPtr0 (ptr0 `plusPtr` bytes) 
         go !acc !ptr !pos
           | ptr >= endPtr = return $ Fail "invalid varint"
