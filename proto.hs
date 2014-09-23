@@ -105,19 +105,25 @@ build (B.PS fp offset length) = B.inlinePerformIO $ withForeignPtr fp $ \fpPtr -
   let !ptr0 = fpPtr `plusPtr` offset
   let !endPtr = ptr0 `plusPtr` length
   let mkBS ptr len = B.PS fp (ptr `minusPtr` ptr0) len
-  let go ptr builder
-        | ptr >= endPtr = return $! finalize builder
-        | ptr < endPtr = do
-            varInt ptr endPtr $ \ptr key -> do
-            let !fieldNumber = mkFieldNumber key
-            case wireType key of
-              Varint -> do
-                varInt ptr endPtr $ \ptr value -> do
-                  go ptr $! update builder $! (VarInt fieldNumber value)
-              Lengthdelimited -> do
-                varInt ptr endPtr $ \ptr len -> do
-                  let len' = fromIntegral len
-                  go (ptr `plusPtr` len') $! update builder $! (LengthDelimited fieldNumber $! (mkBS ptr len'))
+  let go ptr builder@(Builder bv v updateFn) = go' ptr bv v
+        where
+          go' ptr bv v
+            | ptr >= endPtr = return $! finalize builder
+            | ptr < endPtr = do
+                varInt ptr endPtr $ \ptr key -> do
+                let !fieldNumber = mkFieldNumber key
+                case wireType key of
+                  Varint -> do
+                    varInt ptr endPtr $ \ptr value -> do
+                      let !wv = VarInt fieldNumber value
+                      case updateFn wv bv v of
+                        v' :*: bv' -> go' ptr bv' v'
+                  Lengthdelimited -> do
+                    varInt ptr endPtr $ \ptr len -> do
+                      let len' = fromIntegral len
+                          !wv = LengthDelimited fieldNumber $! (mkBS ptr len')
+                      case updateFn wv bv v of
+                        v' :*: bv' -> go' (ptr `plusPtr` len') bv' v'
   go ptr0 newBuilder
 
 {- INLINE varInt #-}
