@@ -1,4 +1,4 @@
-{-# LANGUAGE BangPatterns, TypeOperators #-}
+{-# LANGUAGE BangPatterns, TypeOperators, ExistentialQuantification #-}
 module Main where
 
 import Data.Int
@@ -26,7 +26,7 @@ data WireValue
   | LengthDelimited !FieldNumber !B.ByteString
 
 data Result a
-  = Done a
+  = Done !a
   | Fail String
   deriving Show
 
@@ -34,7 +34,8 @@ class Buildable a where
   newBuilder :: Builder a
 
 data Builder a
-  = Builder BitVector a (WireValue -> BitVector -> a -> (a :*: BitVector))
+  = forall s. Builder BitVector s (WireValue -> BitVector -> s -> (s :*: BitVector))
+                                  (s -> a)
 
 {-
 message Test1 {
@@ -43,7 +44,7 @@ message Test1 {
 -}
 
 data MessageTest1 = MessageTest1 { test1a :: !Int32 } deriving Show
-mkTest1Builder = Builder 1 (MessageTest1 0) updateTest1
+mkTest1Builder = Builder 1 (MessageTest1 0) updateTest1 id
 updateTest1 !wv !bv !value
   = case wv of
       VarInt 1 int64 -> value { test1a = fromIntegral int64 } :*: clearBit bv 0
@@ -57,7 +58,7 @@ message Test2 {
 }
 -}
 data MessageTest2 = MessageTest2 { test2b :: !T.Text } deriving Show
-mkTest2Builder = Builder 1 (MessageTest2 T.empty) updateTest2
+mkTest2Builder = Builder 1 (MessageTest2 T.empty) updateTest2 id
 updateTest2 !wv !bv !value
   = case wv of
       LengthDelimited 2 bytes -> value { test2b = T.decodeUtf8 bytes } :*: clearBit bv 0
@@ -72,7 +73,7 @@ message Test3 {
 }
 -}
 data MessageTest3 = MessageTest3 { test3c :: MessageTest1 } deriving Show
-mkTest3Builder = Builder 1 (MessageTest3 undefined) updateTest3
+mkTest3Builder = Builder 1 (MessageTest3 undefined) updateTest3 id
 updateTest3 !wv !bv !value
   = case wv of
       LengthDelimited 3 bytes -> value { test3c = case build bytes of Done x -> x } :*: clearBit bv 0
@@ -81,12 +82,12 @@ instance Buildable MessageTest3 where
   newBuilder = mkTest3Builder
 
 update :: Builder a -> WireValue -> Builder a
-update builder@(Builder bv value u) vw =
-  case u vw bv value of
-    value' :*: bv' -> Builder bv' value' u
+update builder@(Builder bv value updateFn finalizeFn) vw =
+  case updateFn vw bv value of
+    value' :*: bv' -> Builder bv' value' updateFn finalizeFn
 
 finalize :: Builder a -> Result a
-finalize (Builder 0 value _) = Done value
+finalize (Builder 0 value _ finalizeFn) = Done (finalizeFn value)
 finalize _ = Fail "all required values not set"
 
 data WireType = Varint | Lengthdelimited deriving Show
@@ -105,10 +106,10 @@ build (B.PS fp offset length) = B.inlinePerformIO $ withForeignPtr fp $ \fpPtr -
   let !ptr0 = fpPtr `plusPtr` offset
   let !endPtr = ptr0 `plusPtr` length
   let mkBS ptr len = B.PS fp (ptr `minusPtr` ptr0) len
-  let go ptr builder@(Builder bv v updateFn) = go' ptr bv v
+  let go ptr builder@(Builder bv v updateFn finalizeFn) = go' ptr bv v
         where
           go' ptr bv v
-            | ptr >= endPtr = return $! finalize (Builder bv v updateFn)
+            | ptr >= endPtr = return $! finalize (Builder bv v updateFn finalizeFn)
             | ptr < endPtr = do
                 varInt ptr endPtr $ \ptr key -> do
                 let !fieldNumber = mkFieldNumber key
