@@ -130,7 +130,7 @@ build (B.PS fp offset length) = B.inlinePerformIO $ withForeignPtr fp $ \fpPtr -
                       go' (ptr `plusPtr` len') bv' v'
   go ptr0 =<< newBuilder
 
-{- INLINE varInt #-}
+{-# INLINE varInt #-}
 varInt :: Ptr Word8 -> Ptr Word8 -> (Ptr Word8 -> Int64 -> IO (Result b)) -> IO (Result b)
 varInt ptr0 endPtr0 k = go acc0 ptr0 0 
   where
