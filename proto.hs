@@ -31,11 +31,11 @@ data Result a
   deriving Show
 
 class Buildable a where
-  newBuilder :: Builder a
+  newBuilder :: IO (Builder a)
 
 data Builder a
-  = forall s. Builder BitVector s (WireValue -> BitVector -> s -> (s :*: BitVector))
-                                  (s -> a)
+  = forall s. Builder BitVector s (WireValue -> BitVector -> s -> IO (s :*: BitVector))
+                                  (s -> IO a)
 
 {-
 message Test1 {
@@ -44,11 +44,11 @@ message Test1 {
 -}
 
 data MessageTest1 = MessageTest1 { test1a :: !Int32 } deriving Show
-mkTest1Builder = Builder 1 (MessageTest1 0) updateTest1 id
+mkTest1Builder = return $ Builder 1 (MessageTest1 0) updateTest1 (return.id)
 updateTest1 !wv !bv !value
   = case wv of
-      VarInt 1 int64 -> value { test1a = fromIntegral int64 } :*: clearBit bv 0
-      _ -> value :*: bv
+      VarInt 1 int64 -> return $ value { test1a = fromIntegral int64 } :*: clearBit bv 0
+      _ -> return $ value :*: bv
 instance Buildable MessageTest1 where
   newBuilder = mkTest1Builder
 
@@ -58,11 +58,11 @@ message Test2 {
 }
 -}
 data MessageTest2 = MessageTest2 { test2b :: !T.Text } deriving Show
-mkTest2Builder = Builder 1 (MessageTest2 T.empty) updateTest2 id
+mkTest2Builder = return $ Builder 1 (MessageTest2 T.empty) updateTest2 (return.id)
 updateTest2 !wv !bv !value
   = case wv of
-      LengthDelimited 2 bytes -> value { test2b = T.decodeUtf8 bytes } :*: clearBit bv 0
-      _ -> value :*: bv
+      LengthDelimited 2 bytes -> return $ value { test2b = T.decodeUtf8 bytes } :*: clearBit bv 0
+      _ -> return $ value :*: bv
 instance Buildable MessageTest2 where
   newBuilder = mkTest2Builder
 
@@ -73,22 +73,23 @@ message Test3 {
 }
 -}
 data MessageTest3 = MessageTest3 { test3c :: MessageTest1 } deriving Show
-mkTest3Builder = Builder 1 (MessageTest3 undefined) updateTest3 id
+mkTest3Builder = return $ Builder 1 (MessageTest3 undefined) updateTest3 (return.id)
 updateTest3 !wv !bv !value
   = case wv of
-      LengthDelimited 3 bytes -> value { test3c = case build bytes of Done x -> x } :*: clearBit bv 0
-      _ -> value :*: bv
+      LengthDelimited 3 bytes -> return $ value { test3c = case build bytes of Done x -> x } :*: clearBit bv 0
+      _ -> return $ value :*: bv
 instance Buildable MessageTest3 where
   newBuilder = mkTest3Builder
 
-update :: Builder a -> WireValue -> Builder a
-update builder@(Builder bv value updateFn finalizeFn) vw =
-  case updateFn vw bv value of
-    value' :*: bv' -> Builder bv' value' updateFn finalizeFn
+update :: Builder a -> WireValue -> IO (Builder a)
+update builder@(Builder bv value updateFn finalizeFn) vw = do
+  x <- updateFn vw bv value
+  case x of
+    value' :*: bv' -> return $ Builder bv' value' updateFn finalizeFn
 
-finalize :: Builder a -> Result a
-finalize (Builder 0 value _ finalizeFn) = Done (finalizeFn value)
-finalize _ = Fail "all required values not set"
+finalize :: Builder a -> IO (Result a)
+finalize (Builder 0 value _ finalizeFn) = fmap Done (finalizeFn value)
+finalize _ = return $ Fail "all required values not set"
 
 data WireType = Varint | Lengthdelimited deriving Show
 wireType :: Int64 -> WireType
@@ -109,7 +110,7 @@ build (B.PS fp offset length) = B.inlinePerformIO $ withForeignPtr fp $ \fpPtr -
   let go ptr builder@(Builder bv v updateFn finalizeFn) = go' ptr bv v
         where
           go' ptr bv v
-            | ptr >= endPtr = return $! finalize (Builder bv v updateFn finalizeFn)
+            | ptr >= endPtr = finalize (Builder bv v updateFn finalizeFn)
             | ptr < endPtr = do
                 varInt ptr endPtr $ \ptr key -> do
                 let !fieldNumber = mkFieldNumber key
@@ -117,15 +118,15 @@ build (B.PS fp offset length) = B.inlinePerformIO $ withForeignPtr fp $ \fpPtr -
                   Varint -> do
                     varInt ptr endPtr $ \ptr value -> do
                       let !wv = VarInt fieldNumber value
-                      case updateFn wv bv v of
-                        v' :*: bv' -> go' ptr bv' v'
+                      v' :*: bv' <- updateFn wv bv v
+                      go' ptr bv' v'
                   Lengthdelimited -> do
                     varInt ptr endPtr $ \ptr len -> do
                       let len' = fromIntegral len
                           !wv = LengthDelimited fieldNumber $! (mkBS ptr len')
-                      case updateFn wv bv v of
-                        v' :*: bv' -> go' (ptr `plusPtr` len') bv' v'
-  go ptr0 newBuilder
+                      v' :*: bv' <- updateFn wv bv v
+                      go' (ptr `plusPtr` len') bv' v'
+  go ptr0 =<< newBuilder
 
 {- INLINE varInt #-}
 varInt :: Ptr Word8 -> Ptr Word8 -> (Ptr Word8 -> Int64 -> IO (Result b)) -> IO (Result b)
