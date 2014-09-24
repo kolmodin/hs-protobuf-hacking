@@ -16,6 +16,8 @@ import Foreign.Storable
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 
+import Criterion.Main
+
 type FieldNumber = Word64
 type BitVector = Word64
 
@@ -156,3 +158,8 @@ main = do
   print (build msg1 :: Result MessageTest1)
   print (build msg2 :: Result MessageTest2)
   print (build msg3 :: Result MessageTest3)
+  defaultMain
+    [ bench "MessageTest1" (whnf (build :: B.ByteString -> Result MessageTest1) msg1)
+    , bench "MessageTest2" (whnf (build :: B.ByteString -> Result MessageTest2) msg2)
+    , bench "MessageTest3" (whnf (build :: B.ByteString -> Result MessageTest3) msg3) ]
+
