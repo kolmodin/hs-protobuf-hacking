@@ -108,7 +108,7 @@ build :: Buildable a => B.ByteString -> Result a
 build (B.PS fp offset length) = B.inlinePerformIO $ withForeignPtr fp $ \fpPtr -> do
   let !ptr0 = fpPtr `plusPtr` offset
   let !endPtr = ptr0 `plusPtr` length
-  let mkBS ptr len = B.PS fp (ptr `minusPtr` ptr0) len
+  let mkBS ptr len = B.PS fp (ptr `minusPtr` fpPtr) len
   let go ptr builder@(Builder bv v updateFn finalizeFn) = go' ptr bv v
         where
           go' ptr bv v
