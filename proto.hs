@@ -24,7 +24,7 @@ type BitVector = Word64
 data a :*: b = !a :*: !b
 
 data WireValue
-  = VarInt !FieldNumber !Int64
+  = VarInt !FieldNumber !Word64
   | LengthDelimited !FieldNumber !B.ByteString
 
 data Result a
@@ -94,15 +94,15 @@ finalize (Builder 0 value _ finalizeFn) = fmap Done (finalizeFn value)
 finalize _ = return $ Fail "all required values not set"
 
 data WireType = Varint | Lengthdelimited deriving Show
-wireType :: Int64 -> WireType
+wireType :: Word64 -> WireType
 wireType t =
   case t .&. 7 of
     0 -> Varint
     2 -> Lengthdelimited
     n -> error ("unknown type: " ++ show n ++ " from tag: " ++ show t)
 
-mkFieldNumber :: Int64 -> Word64
-mkFieldNumber key = (fromIntegral key) `shiftR` 3
+mkFieldNumber :: Word64 -> Word64
+mkFieldNumber key = key `shiftR` 3
 
 build :: Buildable a => B.ByteString -> Result a
 build (B.PS fp offset length) = B.inlinePerformIO $ withForeignPtr fp $ \fpPtr -> do
@@ -131,14 +131,17 @@ build (B.PS fp offset length) = B.inlinePerformIO $ withForeignPtr fp $ \fpPtr -
   go ptr0 =<< newBuilder
 
 {-# INLINE varInt #-}
-varInt :: Ptr Word8 -> Ptr Word8 -> (Ptr Word8 -> Int64 -> IO (Result b)) -> IO (Result b)
-varInt ptr0 endPtr0 k = go acc0 ptr0 0 
+varInt :: Ptr Word8 -> Ptr Word8 -> (Ptr Word8 -> Word64 -> IO (Result a)) -> IO (Result a)
+varInt ptr0 endPtr0 k = go 0 ptr0 0
   where
-        !acc0 = 0
-        !bytes = ceiling (fromIntegral (bitSize acc0) / 7)
-        !endPtr = min endPtr0 (ptr0 `plusPtr` bytes) 
+        -- a varint encoding cannot use more than 10 bytes
+        !maxEndPtr = ptr0 `plusPtr` 10
+        !endPtr = min endPtr0 maxEndPtr
         go !acc !ptr !pos
-          | ptr >= endPtr = return $ Fail "invalid varint"
+          | ptr >= endPtr = do
+              case () of
+                _ | ptr >= maxEndPtr -> return $ Fail "varInt: invalid varint"
+                  | otherwise -> return $ Fail "varInt: reached end of input"
           | otherwise = do
               !byte <- peek ptr
               let !continue = byte >= 128
